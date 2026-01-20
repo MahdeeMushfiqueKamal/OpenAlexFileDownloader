@@ -35,11 +35,6 @@ class OpenAlexFileDownloader:
     MIN_PAGE_DELAY = 3.0
     MAX_PAGE_DELAY = 8.0
 
-    # Smarter timeout settings
-    INITIAL_WAIT_TIMEOUT = 30  # Wait up to 30s for download to start
-    MAX_DOWNLOAD_TIMEOUT = 600  # Maximum 10 minutes for any single download
-    STALLED_DOWNLOAD_TIMEOUT = 120  # If .crdownload file size doesn't change for 2 minutes, consider it stalled
-
     def __init__(
         self,
         urls: List[str],
@@ -88,77 +83,20 @@ class OpenAlexFileDownloader:
     def _check_download_status(
         self, timeout: int = 60, check_interval: float = 1.0
     ) -> bool:
-        """
-        Smarter download detection that:
-        1. Waits for download to start (checks for .crdownload or new .pdf)
-        2. Monitors download progress as long as file size is changing
-        3. Detects stalled downloads
-        4. Has maximum timeout to prevent infinite waiting
-        """
         download_path = Path(self.download_directory)
         start_time = time.time()
 
         initial_files = self.downloaded_files.copy()
+        logging.info(f"Monitoring for new downloads (timeout: {timeout}s)...")
 
-        # Phase 1: Wait for download to START
-        logging.info(
-            f"Phase 1: Waiting for download to start (timeout: {self.INITIAL_WAIT_TIMEOUT}s)..."
-        )
-        download_started = False
-
-        while time.time() - start_time < self.INITIAL_WAIT_TIMEOUT:
-            temp_files = list(download_path.glob("*.crdownload"))
-            current_files = {f.name for f in download_path.glob("*.pdf") if f.is_file()}
-            new_files = current_files - initial_files
-
-            if temp_files or new_files:
-                download_started = True
-                logging.info("Download has started!")
-                break
-
-            time.sleep(check_interval)
-
-        if not download_started:
-            logging.warning(
-                f"No download detected after {self.INITIAL_WAIT_TIMEOUT} seconds"
-            )
-            return False
-
-        # Phase 2: Monitor download PROGRESS
-        logging.info(
-            f"Phase 2: Monitoring download progress (max timeout: {self.MAX_DOWNLOAD_TIMEOUT}s)..."
-        )
-        last_size = 0
-        last_size_change_time = time.time()
-
-        while time.time() - start_time < self.MAX_DOWNLOAD_TIMEOUT:
+        while time.time() - start_time < timeout:
             temp_files = list(download_path.glob("*.crdownload"))
 
-            # Check if download is still in progress
             if temp_files:
-                temp_file = temp_files[0]
-                current_size = temp_file.stat().st_size if temp_file.exists() else 0
-
-                # File size is changing - download is progressing
-                if current_size != last_size:
-                    logging.info(
-                        f"Download in progress: {temp_file.name} ({current_size:,} bytes)"
-                    )
-                    last_size = current_size
-                    last_size_change_time = time.time()
-                else:
-                    # File size hasn't changed - check if it's stalled
-                    stalled_duration = time.time() - last_size_change_time
-                    if stalled_duration > self.STALLED_DOWNLOAD_TIMEOUT:
-                        logging.error(
-                            f"Download appears stalled (no progress for {stalled_duration:.0f}s)"
-                        )
-                        return False
-
+                logging.info(f"Download in progress: {temp_files[0].name}")
                 time.sleep(check_interval)
                 continue
 
-            # No .crdownload files - check if we have a completed PDF
             current_files = {f.name for f in download_path.glob("*.pdf") if f.is_file()}
             new_files = current_files - initial_files
 
@@ -168,9 +106,8 @@ class OpenAlexFileDownloader:
 
                 if file_path.exists() and file_path.stat().st_size > 0:
                     file_size = file_path.stat().st_size
-                    download_duration = time.time() - start_time
                     logging.info(
-                        f"✓ Download completed: {new_file} ({file_size:,} bytes) in {download_duration:.1f}s"
+                        f"New download detected: {new_file} ({file_size:,} bytes)"
                     )
 
                     self.downloaded_files = current_files
@@ -178,11 +115,7 @@ class OpenAlexFileDownloader:
 
             time.sleep(check_interval)
 
-        # Maximum timeout reached
-        elapsed = time.time() - start_time
-        logging.error(
-            f"Download timeout after {elapsed:.0f} seconds (max: {self.MAX_DOWNLOAD_TIMEOUT}s)"
-        )
+        logging.warning(f"Download check timeout after {timeout} seconds")
         return False
 
     def _setup_driver(self):
@@ -223,6 +156,7 @@ class OpenAlexFileDownloader:
 
         logging.info("Initializing Undetected ChromeDriver...")
 
+        # Let undetected-chromedriver auto-download matching version
         self.driver = uc.Chrome(
             options=chrome_options,
             version_main=143,  # Specify your Chrome version (143)
@@ -293,7 +227,9 @@ class OpenAlexFileDownloader:
             time.sleep(self.PAGE_LOAD_WAIT)
 
             logging.info("Checking for automatic download...")
-            download_success = self._check_download_status()
+            download_success = self._check_download_status(
+                timeout=10, check_interval=0.5
+            )
 
             if not download_success:
                 logging.info(
@@ -306,7 +242,9 @@ class OpenAlexFileDownloader:
                 actions.send_keys(Keys.CONTROL + "s").perform()
 
                 logging.info("Download command sent, checking download status...")
-                download_success = self._check_download_status()
+                download_success = self._check_download_status(
+                    timeout=60, check_interval=1.0
+                )
 
             if download_success:
                 logging.info(f"Download successful from: {url}")

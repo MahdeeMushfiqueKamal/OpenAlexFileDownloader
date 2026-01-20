@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "openalex-downloader"
+version = "0.1.0"
+description = "OpenAlex PDF Downloader with Selenium"
+authors = ["Mahdee Kamal <mahdee.m.kamal@gmail.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+selenium = "^4.16.0"
+webdriver-manager = "^4.0.1"
+pandas = "^2.1.4"
+pyalex = "^0.13"
+undetected-chromedriver = "^3.5.5"
+setuptools = "^80.9.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
